@@ -388,6 +388,17 @@ body {
     overflow: hidden;
 }
 
+.exercise-card.dragging {
+    opacity: 0.45;
+    transform: scale(0.98);
+    border: 2px dashed var(--theme-primary) !important;
+}
+
+.exercise-card.drag-over {
+    border-top: 3px solid var(--theme-primary) !important;
+    box-shadow: 0 -6px 16px var(--theme-glow);
+}
+
 .exercise-card::before {
     content: '';
     position: absolute;
@@ -403,6 +414,96 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
+}
+
+/* Controles de Reordenação e Alça de Arrasto */
+.exercise-drag-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: 8px;
+}
+
+.drag-handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-muted);
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+    transition: all 0.2s ease;
+}
+
+.drag-handle:hover, .drag-handle:active {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+}
+
+.btn-move-order {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 10px;
+    padding: 0;
+    transition: all 0.15s ease;
+}
+
+.btn-move-order:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--theme-primary);
+    border-color: var(--theme-primary);
+}
+
+.btn-move-order:disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* Botão Pílula: Peso Duplo / Ambos os Lados */
+.btn-double-weight {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    user-select: none;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-muted);
+}
+
+.btn-double-weight:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-secondary);
+}
+
+.btn-double-weight.active {
+    background: var(--theme-glow);
+    border-color: var(--theme-primary);
+    color: var(--theme-primary);
+    box-shadow: 0 0 10px rgba(0, 240, 255, 0.15);
+}
     margin-bottom: 12px;
 }
 

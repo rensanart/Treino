@@ -231,6 +231,7 @@ function initNewSession(id) {
                 name: ex.name,
                 reps: ex.reps,
                 tip: ex.tip || '',
+                isDoubleWeight: isExerciseDoubleWeight(ex),
                 sets: setsArray
             };
         })
@@ -340,8 +341,83 @@ function onWorkoutSelectChange(id) {
 }
 
 // ==========================================================================
-// 5. RENDERIZAÇÃO DA INTERFACE (DOM)
+// 5. RENDERIZAÇÃO DA INTERFACE (DOM) & REORDENAÇÃO
 // ==========================================================================
+
+// Retorna se o exercício usa peso bilateral (ambos os lados)
+function isExerciseDoubleWeight(ex) {
+    if (!ex) return false;
+    if (ex.isDoubleWeight !== undefined) return !!ex.isDoubleWeight;
+    const nameStr = (ex.name || '').toLowerCase();
+    const weightStr = (ex.defaultWeight || '').toLowerCase();
+    return nameStr.includes('halter') || nameStr.includes('halteres') ||
+           nameStr.includes('cada lado') || weightStr.includes('cada lado') ||
+           weightStr.includes('halter') || nameStr.includes('dumbell') || nameStr.includes('dumbbell');
+}
+
+// Alterna o estado de peso duplo (ambos os lados) para o exercício
+function toggleDoubleWeight(exId) {
+    if (!currentSession) return;
+    const ex = currentSession.exercises.find(e => e.id === exId);
+    if (!ex) return;
+    
+    ex.isDoubleWeight = !isExerciseDoubleWeight(ex);
+    
+    // Sincroniza também no WORKOUTS_DATABASE permanente
+    if (WORKOUTS_DATABASE[currentSession.letter] && WORKOUTS_DATABASE[currentSession.letter].exercises) {
+        const dbEx = WORKOUTS_DATABASE[currentSession.letter].exercises.find(e => e.id === exId || e.name === ex.name);
+        if (dbEx) {
+            dbEx.isDoubleWeight = ex.isDoubleWeight;
+            saveWorkoutsDatabase();
+        }
+    }
+    
+    saveCurrentSessionState();
+    renderExercises();
+}
+
+// Move um exercício de uma posição para outra (Drag & Drop e Botões)
+function moveExercise(fromIndex, toIndex) {
+    if (!currentSession || !currentSession.exercises) return;
+    if (fromIndex < 0 || fromIndex >= currentSession.exercises.length) return;
+    if (toIndex < 0 || toIndex >= currentSession.exercises.length) return;
+    if (fromIndex === toIndex) return;
+    
+    const [movedEx] = currentSession.exercises.splice(fromIndex, 1);
+    currentSession.exercises.splice(toIndex, 0, movedEx);
+    
+    // Atualiza a ordem no banco de dados permanente deste treino
+    if (WORKOUTS_DATABASE[currentSession.letter] && WORKOUTS_DATABASE[currentSession.letter].exercises) {
+        const dbList = WORKOUTS_DATABASE[currentSession.letter].exercises;
+        const dbFrom = dbList.findIndex(e => e.id === movedEx.id || e.name === movedEx.name);
+        if (dbFrom !== -1) {
+            const [movedDbEx] = dbList.splice(dbFrom, 1);
+            dbList.splice(toIndex, 0, movedDbEx);
+            saveWorkoutsDatabase();
+        }
+    }
+    
+    saveCurrentSessionState();
+    renderExercises();
+}
+
+// Mover exercício para cima
+function moveExerciseUp(exId) {
+    if (!currentSession) return;
+    const idx = currentSession.exercises.findIndex(e => e.id === exId);
+    if (idx > 0) {
+        moveExercise(idx, idx - 1);
+    }
+}
+
+// Mover exercício para baixo
+function moveExerciseDown(exId) {
+    if (!currentSession) return;
+    const idx = currentSession.exercises.findIndex(e => e.id === exId);
+    if (idx !== -1 && idx < currentSession.exercises.length - 1) {
+        moveExercise(idx, idx + 1);
+    }
+}
 
 // Renderiza a lista de exercícios na tela
 function renderExercises() {
@@ -352,6 +428,10 @@ function renderExercises() {
         const card = document.createElement('div');
         card.className = 'exercise-card glass';
         card.id = `exercise-${ex.id}`;
+        card.dataset.index = exIndex;
+        card.dataset.exId = ex.id;
+        
+        const isDouble = isExerciseDoubleWeight(ex);
         
         // Verifica se todas as séries do exercício foram concluídas
         const allCompleted = ex.sets.length > 0 && ex.sets.every(s => s.completed);
@@ -388,7 +468,7 @@ function renderExercises() {
             const maxWeightRange = Math.max(80, currentWeightNum);
             for (let w = 1; w <= maxWeightRange; w++) {
                 const selected = (!isPesoCorporal && currentWeightNum === w) ? 'selected' : '';
-                weightOptions += `<option value="${w} kg" ${selected}>${w} kg</option>`;
+                weightOptions += `<option value="${w} kg" ${selected}>${w} kg${isDouble ? ' cada lado' : ''}</option>`;
             }
             
             setsHTML += `
@@ -428,20 +508,42 @@ function renderExercises() {
         
         card.innerHTML = `
             <div class="exercise-header">
-                <div class="exercise-title-section" style="width: 100%;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 10px;">
-                        <h3 class="exercise-title">${ex.name}</h3>
-                        <span class="exercise-percent-label" id="percent-${ex.id}" style="font-family: var(--font-heading); font-size: 13px; font-weight: 800; color: var(--theme-primary);">${percent}%</span>
+                <div style="display: flex; align-items: flex-start; gap: 8px; width: 100%;">
+                    <div class="exercise-drag-controls">
+                        <div class="drag-handle" title="Segure e arraste para reordenar" draggable="true" data-index="${exIndex}">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                <circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/>
+                                <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+                                <circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/>
+                            </svg>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 2px;">
+                            <button type="button" class="btn-move-order" onclick="moveExerciseUp('${ex.id}')" ${exIndex === 0 ? 'disabled' : ''} title="Subir exercício">▲</button>
+                            <button type="button" class="btn-move-order" onclick="moveExerciseDown('${ex.id}')" ${exIndex === currentSession.exercises.length - 1 ? 'disabled' : ''} title="Descer exercício">▼</button>
+                        </div>
                     </div>
                     
-                    <!-- Barra de progresso individual do exercício -->
-                    <div class="exercise-progress-container" style="background: rgba(255, 255, 255, 0.04); height: 5px; border-radius: 3px; overflow: hidden; margin-top: 6px; position: relative; border: 1px solid rgba(255,255,255,0.02);">
-                        <div class="exercise-progress-bar" id="progress-${ex.id}" style="width: ${percent}%; height: 100%; background: linear-gradient(90deg, var(--theme-primary), var(--theme-secondary)); border-radius: 3px; transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 0 6px var(--theme-primary);"></div>
-                    </div>
+                    <div class="exercise-title-section" style="flex: 1;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 10px;">
+                            <h3 class="exercise-title">${ex.name}</h3>
+                            <span class="exercise-percent-label" id="percent-${ex.id}" style="font-family: var(--font-heading); font-size: 13px; font-weight: 800; color: var(--theme-primary);">${percent}%</span>
+                        </div>
+                        
+                        <!-- Barra de progresso individual do exercício -->
+                        <div class="exercise-progress-container" style="background: rgba(255, 255, 255, 0.04); height: 5px; border-radius: 3px; overflow: hidden; margin-top: 6px; position: relative; border: 1px solid rgba(255,255,255,0.02);">
+                            <div class="exercise-progress-bar" id="progress-${ex.id}" style="width: ${percent}%; height: 100%; background: linear-gradient(90deg, var(--theme-primary), var(--theme-secondary)); border-radius: 3px; transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 0 6px var(--theme-primary);"></div>
+                        </div>
 
-                    <div class="exercise-meta-badges" style="margin-top: 8px;">
-                        <span class="badge badge-reps">${ex.sets.length} séries × ${ex.reps}</span>
-                        ${allCompleted ? '<span class="badge badge-info" style="background: var(--theme-glow); color: var(--theme-primary)">Concluído!</span>' : ''}
+                        <div class="exercise-meta-badges" style="margin-top: 8px; align-items: center; flex-wrap: wrap; gap: 6px;">
+                            <span class="badge badge-reps">${ex.sets.length} séries × ${ex.reps}</span>
+                            ${allCompleted ? '<span class="badge badge-info" style="background: var(--theme-glow); color: var(--theme-primary)">Concluído!</span>' : ''}
+                            <button type="button" 
+                                    class="btn-double-weight ${isDouble ? 'active' : ''}" 
+                                    onclick="toggleDoubleWeight('${ex.id}')" 
+                                    title="${isDouble ? 'Volume em dobro (peso para cada lado)' : 'Volume simples (peso único)'}">
+                                ⚖️ ${isDouble ? '2x Cada lado' : '1x Total'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -452,7 +554,7 @@ function renderExercises() {
                 <div class="sets-header-row">
                     <div class="center">Série</div>
                     <div>Meta</div>
-                    <div class="center">Carga / Peso</div>
+                    <div class="center">Carga ${isDouble ? '(cada lado)' : '/ Peso'}</div>
                     <div class="center">Feito</div>
                 </div>
                 ${setsHTML}
@@ -481,6 +583,68 @@ function renderExercises() {
                 </button>
             </div>
         `;
+        
+        // Listeners para Drag and Drop
+        card.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            card.classList.add('drag-over');
+        });
+        card.addEventListener('dragleave', () => {
+            card.classList.remove('drag-over');
+        });
+        card.addEventListener('drop', (e) => {
+            e.preventDefault();
+            card.classList.remove('drag-over');
+            const fromIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
+            const toIndex = exIndex;
+            if (!isNaN(fromIndex) && fromIndex !== toIndex) {
+                moveExercise(fromIndex, toIndex);
+            }
+        });
+        
+        const handle = card.querySelector('.drag-handle');
+        if (handle) {
+            handle.addEventListener('dragstart', (e) => {
+                card.classList.add('dragging');
+                e.dataTransfer.setData('text/plain', exIndex.toString());
+                e.dataTransfer.effectAllowed = 'move';
+            });
+            handle.addEventListener('dragend', () => {
+                card.classList.remove('dragging');
+                document.querySelectorAll('.exercise-card').forEach(c => c.classList.remove('drag-over', 'dragging'));
+            });
+            
+            // Suporte tátil para smartphones/tablets
+            let touchStartIndex = exIndex;
+            handle.addEventListener('touchstart', (e) => {
+                touchStartIndex = exIndex;
+                card.classList.add('dragging');
+            }, { passive: true });
+            
+            handle.addEventListener('touchmove', (e) => {
+                const touch = e.touches[0];
+                const targetEl = document.elementFromPoint(touch.clientX, touch.clientY);
+                const targetCard = targetEl ? targetEl.closest('.exercise-card') : null;
+                document.querySelectorAll('.exercise-card').forEach(c => c.classList.remove('drag-over'));
+                if (targetCard && targetCard !== card) {
+                    targetCard.classList.add('drag-over');
+                }
+            }, { passive: true });
+            
+            handle.addEventListener('touchend', (e) => {
+                card.classList.remove('dragging');
+                const touch = e.changedTouches[0];
+                const targetEl = document.elementFromPoint(touch.clientX, touch.clientY);
+                const targetCard = targetEl ? targetEl.closest('.exercise-card') : null;
+                document.querySelectorAll('.exercise-card').forEach(c => c.classList.remove('drag-over'));
+                if (targetCard && targetCard.dataset.index !== undefined) {
+                    const targetIndex = parseInt(targetCard.dataset.index, 10);
+                    if (!isNaN(targetIndex) && targetIndex !== touchStartIndex) {
+                        moveExercise(touchStartIndex, targetIndex);
+                    }
+                }
+            });
+        }
         
         container.appendChild(card);
     });
@@ -556,6 +720,14 @@ function updateWeight(exId, setIndex, value) {
             exercise.sets[i].weight = value;
             saveLastUsedWeight(currentWorkoutLetter, exId, i, value);
         }
+        // Sincroniza também como defaultWeight no banco definitivo deste treino
+        if (WORKOUTS_DATABASE[currentWorkoutLetter] && WORKOUTS_DATABASE[currentWorkoutLetter].exercises) {
+            const dbEx = WORKOUTS_DATABASE[currentWorkoutLetter].exercises.find(e => e.id === exId || e.name === exercise.name);
+            if (dbEx) {
+                dbEx.defaultWeight = value;
+                saveWorkoutsDatabase();
+            }
+        }
         // Como alteramos os valores das outras linhas, re-renderizamos para atualizar os dropdowns na tela
         renderExercises();
     }
@@ -583,6 +755,14 @@ function updateReps(exId, setIndex, value) {
             exercise.sets[i].reps = repsInt;
             saveLastUsedReps(currentWorkoutLetter, exId, i, repsInt);
         }
+        // Sincroniza também como reps padrão no banco definitivo deste treino
+        if (WORKOUTS_DATABASE[currentWorkoutLetter] && WORKOUTS_DATABASE[currentWorkoutLetter].exercises) {
+            const dbEx = WORKOUTS_DATABASE[currentWorkoutLetter].exercises.find(e => e.id === exId || e.name === exercise.name);
+            if (dbEx) {
+                dbEx.reps = `${repsInt}`;
+                saveWorkoutsDatabase();
+            }
+        }
         // Re-renderiza para atualizar os dropdowns na tela
         renderExercises();
     }
@@ -609,6 +789,15 @@ function addSetToExercise(exId) {
         reps: defaultReps
     });
     
+    // Sincroniza quantidade de séries no WORKOUTS_DATABASE
+    if (WORKOUTS_DATABASE[currentWorkoutLetter] && WORKOUTS_DATABASE[currentWorkoutLetter].exercises) {
+        const dbEx = WORKOUTS_DATABASE[currentWorkoutLetter].exercises.find(e => e.id === exId || e.name === exercise.name);
+        if (dbEx) {
+            dbEx.sets = exercise.sets.length;
+            saveWorkoutsDatabase();
+        }
+    }
+    
     saveCurrentSessionState();
     renderExercises();
 }
@@ -619,6 +808,15 @@ function removeSetFromExercise(exId) {
     if (!exercise || exercise.sets.length === 0) return;
     
     exercise.sets.pop();
+    
+    // Sincroniza quantidade de séries no WORKOUTS_DATABASE
+    if (WORKOUTS_DATABASE[currentWorkoutLetter] && WORKOUTS_DATABASE[currentWorkoutLetter].exercises) {
+        const dbEx = WORKOUTS_DATABASE[currentWorkoutLetter].exercises.find(e => e.id === exId || e.name === exercise.name);
+        if (dbEx) {
+            dbEx.sets = exercise.sets.length;
+            saveWorkoutsDatabase();
+        }
+    }
     
     saveCurrentSessionState();
     renderExercises();
@@ -1178,9 +1376,10 @@ function showCalendarDayDetails(year, month, day) {
             let exercisesSummary = '';
             item.exercises.forEach(ex => {
                 const completedSets = ex.sets.filter(s => s.completed);
+                const isDouble = ex.isDoubleWeight !== undefined ? ex.isDoubleWeight : isExerciseDoubleWeight(ex);
                 if (completedSets.length > 0) {
-                    const seriesDetails = completedSets.map(s => `${s.reps || 10}x ${s.weight}`).join(' | ');
-                    exercisesSummary += `<div style="font-size: 11px; margin-top: 4px; color: var(--text-secondary);">• <strong>${ex.name}:</strong> ${seriesDetails}</div>`;
+                    const seriesDetails = completedSets.map(s => `${s.reps || 10}x ${s.weight}${isDouble ? ' (2x)' : ''}`).join(' | ');
+                    exercisesSummary += `<div style="font-size: 11px; margin-top: 4px; color: var(--text-secondary);">• <strong>${ex.name}:</strong> ${seriesDetails}${isDouble ? ' <span style="font-size: 9px; color: var(--theme-primary); font-weight: 700;">[2x cada lado]</span>' : ''}</div>`;
                 }
             });
             
@@ -1982,9 +2181,10 @@ function renderHistory() {
         let exercisesSummary = '';
         item.exercises.forEach(ex => {
             const completedSets = ex.sets.filter(s => s.completed);
+            const isDouble = ex.isDoubleWeight !== undefined ? ex.isDoubleWeight : isExerciseDoubleWeight(ex);
             if (completedSets.length > 0) {
-                const seriesDetails = completedSets.map(s => `${s.reps || 10}x ${s.weight}`).join(' | ');
-                exercisesSummary += `<div>• <strong>${ex.name}:</strong> ${seriesDetails}</div>`;
+                const seriesDetails = completedSets.map(s => `${s.reps || 10}x ${s.weight}${isDouble ? ' (2x)' : ''}`).join(' | ');
+                exercisesSummary += `<div>• <strong>${ex.name}:</strong> ${seriesDetails}${isDouble ? ' <span style="font-size: 10px; color: var(--theme-primary); font-weight: 700;">[2x cada lado]</span>' : ''}</div>`;
             }
         });
         
@@ -2137,7 +2337,7 @@ function savePastWorkoutRecord() {
     const exercisesArray = workoutDef.exercises.map(ex => {
         const lastSessionWeights = lastWeights[ex.id] || [];
         const setsArray = [];
-        
+        const isDouble = isExerciseDoubleWeight(ex);
         const repsVal = parseReps(ex.reps);
         
         for (let i = 0; i < ex.sets; i++) {
@@ -2153,12 +2353,13 @@ function savePastWorkoutRecord() {
             totalCompletedSets++;
             
             // Incrementa o volume estimado
-            const weightVal = extractNumericWeight(weight);
+            const weightVal = extractNumericWeight(weight, isDouble);
             estimatedVolume += (weightVal * repsVal);
         }
         
         return {
             name: ex.name,
+            isDoubleWeight: isDouble,
             sets: setsArray
         };
     });
@@ -2334,7 +2535,8 @@ function saveEditedHistoryRecord() {
                 totalCompletedSets++;
                 
                 // Extrai peso e calcula volume estimado real
-                const weightVal = extractNumericWeight(weightStr);
+                const isDouble = ex.isDoubleWeight !== undefined ? ex.isDoubleWeight : isExerciseDoubleWeight(ex);
+                const weightVal = extractNumericWeight(weightStr, isDouble);
                 estimatedVolume += (weightVal * repsVal);
             });
             ex.sets = setsArray;
@@ -2472,13 +2674,14 @@ function resetActiveWorkout() {
 }
 
 // Função inteligente para extrair o peso numérico de strings como "18 kg cada lado" ou "3 placas"
-function extractNumericWeight(weightStr) {
+function extractNumericWeight(weightStr, isDouble = false) {
     if (!weightStr) return 0;
     
-    // Tratamento especial para placas (multiplica por 5 ou 10 fictício para fins de volume relativo)
+    // Tratamento especial para placas (multiplica por 10 fictício para fins de volume relativo)
     if (weightStr.toLowerCase().includes('placa')) {
         const match = weightStr.match(/\d+/);
-        return match ? parseInt(match[0]) * 10 : 0; // Assume 10kg por placa
+        const base = match ? parseInt(match[0]) * 10 : 0;
+        return isDouble ? base * 2 : base;
     }
     
     // Se for peso corporal
@@ -2491,13 +2694,15 @@ function extractNumericWeight(weightStr) {
     if (!match) return 0;
     
     let value = parseFloat(match[0].replace(',', '.'));
+    if (isNaN(value)) return 0;
     
-    // Se especifica "cada lado", dobra para calcular o volume real do exercício
-    if (weightStr.toLowerCase().includes('lado') || weightStr.toLowerCase().includes('halter')) {
+    // Se especifica "cada lado" ou o exercício é bilateral (isDouble), dobra para calcular o volume real
+    const strHasDouble = weightStr.toLowerCase().includes('lado') || weightStr.toLowerCase().includes('halter');
+    if (isDouble || strHasDouble) {
         value = value * 2;
     }
     
-    return isNaN(value) ? 0 : value;
+    return value;
 }
 
 // Função inteligente para estimar repetições numéricas de textos como "5-6", "10-12" ou "Falha"
@@ -2551,12 +2756,13 @@ function finishWorkout() {
     
     currentSession.exercises.forEach(ex => {
         totalPossibleSets += ex.sets.length;
+        const isDouble = isExerciseDoubleWeight(ex);
         ex.sets.forEach(s => {
             if (s.completed) {
                 totalCompletedSets++;
                 
-                const weightVal = extractNumericWeight(s.weight);
-                const repsVal = parseReps(ex.reps);
+                const weightVal = extractNumericWeight(s.weight, isDouble);
+                const repsVal = s.reps || parseReps(ex.reps);
                 estimatedVolume += (weightVal * repsVal);
             }
         });
@@ -2607,8 +2813,9 @@ function generateReportText(totalSets, durationStr, volume) {
     currentSession.exercises.forEach(ex => {
         const completedSets = ex.sets.filter(s => s.completed);
         if (completedSets.length > 0) {
-            const weights = completedSets.map(s => s.weight).join(' | ');
-            text += `• *${ex.name}:* ${completedSets.length} séries (${weights})\n`;
+            const isDouble = isExerciseDoubleWeight(ex);
+            const weights = completedSets.map(s => `${s.weight}${isDouble ? ' (2x)' : ''}`).join(' | ');
+            text += `• *${ex.name}:* ${completedSets.length} séries (${weights})${isDouble ? ' [Carga bilateral 2x]' : ''}\n`;
         }
     });
     
@@ -2653,10 +2860,11 @@ function closeReportModal(shouldSave = false) {
         let estimatedVolume = 0;
         
         currentSession.exercises.forEach(ex => {
+            const isDouble = isExerciseDoubleWeight(ex);
             ex.sets.forEach((s, setI) => {
                 if (s.completed) {
                     totalCompletedSets++;
-                    const weightVal = extractNumericWeight(s.weight);
+                    const weightVal = extractNumericWeight(s.weight, isDouble);
                     const repsVal = s.reps || parseReps(ex.reps);
                     estimatedVolume += (weightVal * repsVal);
                 }
@@ -2664,7 +2872,29 @@ function closeReportModal(shouldSave = false) {
                 saveLastUsedWeight(currentSession.letter, ex.id, setI, s.weight);
                 saveLastUsedReps(currentSession.letter, ex.id, setI, s.reps);
             });
+
+            // Sincroniza a rotina definitiva no WORKOUTS_DATABASE para que novos exercícios e números permaneçam salvos
+            if (WORKOUTS_DATABASE[currentSession.letter]) {
+                const dbEx = WORKOUTS_DATABASE[currentSession.letter].exercises.find(e => e.id === ex.id || e.name === ex.name);
+                if (dbEx) {
+                    dbEx.sets = ex.sets.length;
+                    dbEx.reps = ex.sets[0] ? (ex.sets[0].reps ? `${ex.sets[0].reps}` : ex.reps) : ex.reps;
+                    dbEx.defaultWeight = ex.sets[0] ? ex.sets[0].weight : dbEx.defaultWeight;
+                    dbEx.isDoubleWeight = isDouble;
+                } else {
+                    WORKOUTS_DATABASE[currentSession.letter].exercises.push({
+                        id: ex.id,
+                        name: ex.name,
+                        sets: ex.sets.length,
+                        reps: ex.reps,
+                        defaultWeight: ex.sets[0] ? ex.sets[0].weight : "20 kg",
+                        tip: ex.tip || '',
+                        isDoubleWeight: isDouble
+                    });
+                }
+            }
         });
+        saveWorkoutsDatabase();
 
         const notes = document.getElementById('workout-notes').value.trim();
 
@@ -2692,6 +2922,7 @@ function closeReportModal(shouldSave = false) {
             bodyWeight: getCurrentBodyWeight(), // Peso corporal associado (v1.3.4)
             exercises: currentSession.exercises.map(ex => ({
                 name: ex.name,
+                isDoubleWeight: isExerciseDoubleWeight(ex),
                 sets: ex.sets.map(s => ({
                     setNum: s.setNum,
                     completed: s.completed,
@@ -2888,10 +3119,10 @@ function openEditWorkoutModal() {
     
     if (workoutDef.exercises && workoutDef.exercises.length > 0) {
         workoutDef.exercises.forEach(ex => {
-            addExerciseFieldToModal(ex.name, ex.sets, ex.reps, ex.defaultWeight, ex.tip, ex.id);
+            addExerciseFieldToModal(ex.name, ex.sets, ex.reps, ex.defaultWeight, ex.tip, ex.id, isExerciseDoubleWeight(ex));
         });
     } else {
-        addExerciseFieldToModal('', 4, '10-12', 'Peso corporal', '');
+        addExerciseFieldToModal('', 4, '10-12', 'Peso corporal', '', '', false);
     }
     
     modal.classList.remove('hidden');
@@ -2915,7 +3146,7 @@ function escapeHtml(str) {
 }
 
 // Adiciona linha de exercício no modal de gerenciamento
-function addExerciseFieldToModal(name = '', sets = 4, reps = '10-12', weight = 'Peso corporal', tip = '', id = '') {
+function addExerciseFieldToModal(name = '', sets = 4, reps = '10-12', weight = 'Peso corporal', tip = '', id = '', isDouble = false) {
     const container = document.getElementById('manage-workout-exercises-list');
     if (!container) return;
     
@@ -2931,6 +3162,9 @@ function addExerciseFieldToModal(name = '', sets = 4, reps = '10-12', weight = '
     row.style.flexDirection = 'column';
     row.style.gap = '8px';
     row.style.position = 'relative';
+    
+    // Auto-detecta isDouble se não veio explicitamente marcado
+    const doubleChecked = isDouble || (name && (name.toLowerCase().includes('halter') || name.toLowerCase().includes('cada lado') || weight.toLowerCase().includes('cada lado')));
     
     row.innerHTML = `
         <input type="hidden" class="ex-modal-id" value="${id}">
@@ -2958,6 +3192,13 @@ function addExerciseFieldToModal(name = '', sets = 4, reps = '10-12', weight = '
                 <label style="font-size: 9px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; display: block; margin-bottom: 3px;">Peso Padrão</label>
                 <input type="text" class="ex-modal-weight" placeholder="Ex: 20 kg ou Peso corporal" value="${escapeHtml(weight)}" style="background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; color: var(--text-primary); font-size: 12px; font-weight: 600; width: 100%; outline: none;">
             </div>
+        </div>
+
+        <div style="display: flex; align-items: center; justify-content: flex-start; margin-top: 2px;">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-secondary); cursor: pointer;">
+                <input type="checkbox" class="ex-modal-double" ${doubleChecked ? 'checked' : ''} style="cursor: pointer;">
+                ⚖️ Peso em ambos os lados (2x volume para halteres/cada lado)
+            </label>
         </div>
         
         <div>
@@ -2988,6 +3229,7 @@ function saveManageWorkoutModal() {
         const exReps = row.querySelector('.ex-modal-reps').value.trim() || '10';
         const exWeight = row.querySelector('.ex-modal-weight').value.trim() || 'Peso corporal';
         const exTip = row.querySelector('.ex-modal-tip').value.trim() || '';
+        const exDouble = row.querySelector('.ex-modal-double') ? row.querySelector('.ex-modal-double').checked : false;
         let exId = row.querySelector('.ex-modal-id').value.trim();
         
         if (!exId) {
@@ -3000,7 +3242,8 @@ function saveManageWorkoutModal() {
             sets: exSets,
             reps: exReps,
             defaultWeight: exWeight,
-            tip: exTip
+            tip: exTip,
+            isDoubleWeight: exDouble
         });
     });
     
@@ -3137,49 +3380,84 @@ function deleteWorkoutDefinition() {
     alert("Treino excluído com sucesso!");
 }
 
-// Adiciona um exercício na sessão ativa de forma imediata (v1.3.9)
+// Adiciona um exercício na sessão ativa e persiste na rotina do treino
 function addExerciseToSession() {
     if (!currentSession) return;
     
-    const exName = prompt("Digite o nome do novo exercício:");
+    const exName = prompt("Nome do novo exercício:");
     if (!exName || !exName.trim()) return;
     
-    const exId = 'ex_session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    const cleanName = exName.trim();
+    // Pergunta se é exercício com pesos separados em ambos os lados (halteres / cada lado)
+    const isDouble = confirm(`O exercício "${cleanName}" usa peso em ambos os lados (halteres / cada lado)?\n\nClique em 'OK' para Sim (Volume em dobro 2x)\nClique em 'Cancelar' para Não (Peso único total)`);
+    
+    const defaultWeightInput = prompt("Carga inicial padrão (ex: '14 kg' ou 'Peso corporal'):", isDouble ? "10 kg cada lado" : "20 kg") || (isDouble ? "10 kg cada lado" : "20 kg");
+    const cleanWeight = defaultWeightInput.trim();
+    
+    const exId = 'ex_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
     
     const newEx = {
         id: exId,
-        name: exName.trim(),
+        name: cleanName,
         reps: "10-12",
         tip: "",
+        isDoubleWeight: isDouble,
         sets: []
     };
     
-    // Inicia com 4 séries padrão
+    // Inicia com 4 séries padrão com a carga definida
     for (let i = 0; i < 4; i++) {
         newEx.sets.push({
             setNum: i + 1,
             completed: false,
-            weight: "Peso corporal",
+            weight: cleanWeight,
             reps: 10
         });
+        saveLastUsedWeight(currentSession.letter, exId, i, cleanWeight);
+        saveLastUsedReps(currentSession.letter, exId, i, 10);
     }
     
     currentSession.exercises.push(newEx);
+    
+    // Persiste também no banco de treinos permanente (WORKOUTS_DATABASE)
+    if (WORKOUTS_DATABASE[currentSession.letter]) {
+        if (!WORKOUTS_DATABASE[currentSession.letter].exercises) {
+            WORKOUTS_DATABASE[currentSession.letter].exercises = [];
+        }
+        WORKOUTS_DATABASE[currentSession.letter].exercises.push({
+            id: exId,
+            name: cleanName,
+            sets: 4,
+            reps: "10-12",
+            defaultWeight: cleanWeight,
+            tip: "",
+            isDoubleWeight: isDouble
+        });
+        saveWorkoutsDatabase();
+    }
+    
     saveCurrentSessionState();
     renderExercises();
 }
 
-// Remove um exercício da sessão ativa de forma imediata (v1.3.9)
+// Remove um exercício da sessão ativa e da rotina permanente do treino
 function removeExerciseFromSession(exId) {
     if (!currentSession) return;
     
     const exercise = currentSession.exercises.find(e => e.id === exId);
     if (!exercise) return;
     
-    const confirmRemove = confirm(`Deseja realmente remover o exercício "${exercise.name}" desta sessão?`);
+    const confirmRemove = confirm(`Deseja realmente remover o exercício "${exercise.name}" desta sessão e da rotina permanente deste treino?`);
     if (!confirmRemove) return;
     
     currentSession.exercises = currentSession.exercises.filter(e => e.id !== exId);
+    
+    // Remove também do WORKOUTS_DATABASE permanente
+    if (WORKOUTS_DATABASE[currentSession.letter] && WORKOUTS_DATABASE[currentSession.letter].exercises) {
+        WORKOUTS_DATABASE[currentSession.letter].exercises = WORKOUTS_DATABASE[currentSession.letter].exercises.filter(e => e.id !== exId && e.name !== exercise.name);
+        saveWorkoutsDatabase();
+    }
+    
     saveCurrentSessionState();
     renderExercises();
 }
